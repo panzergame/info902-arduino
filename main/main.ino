@@ -1,92 +1,88 @@
-#include <SoftwareSerial.h>
-constexpr int bluetoothRX = 2;
-constexpr int bluetoothTX = 3;
-SoftwareSerial bluetoothSerial(bluetoothRX, bluetoothTX); // RX | TX
+#include <ArduinoJson.h>
+#define CIRCULAR_BUFFER_INT_SAFE
+#include <CircularBuffer.h>
+constexpr int waterLevelPin = A0;
 
-bool sendBluetoothCommand(const char *command)
-{
-   bluetoothSerial.print(command);
-   int tries = 0;
-   const int maxTries = 1000;
-   while (!bluetoothSerial.available() && tries < maxTries) {
-      ++tries;
-      delay(100);
-   }
+void setup() {
+  // Configuration des entrées sorties
+  pinMode(waterLevelPin, INPUT);
+  pinMode(LED_BUILTIN, OUTPUT);
 
-   if (tries == maxTries) {
-      Serial.print("Timeout: ");
-      Serial.println(command);
-      return false;
-   }
-   else {
-      int i = 0;
-      Serial.print(command);
-      Serial.print(" -> ");
-      while (bluetoothSerial.available()) {
-        const char recvChar = bluetoothSerial.read();
-        Serial.print(recvChar);
-      }
-      Serial.println();
-      return true;
-   }
-}
-
-void setup()
-{
+  // Configuration sortie série
   Serial.begin(9600);
-  Serial.println("Hello");
-  
-  pinMode(bluetoothRX, INPUT);
-  pinMode(bluetoothTX, OUTPUT);
-  bluetoothSerial.begin(9600);
-
-  sendBluetoothCommand("AT+RENEW");
-  sendBluetoothCommand("AT+BAUD2");
-  //sendBluetoothCommand("AT+RESET");
-
-  /*bluetoothSerial.begin(9600);
-  delay(3500);*/
-
-  sendBluetoothCommand("AT+NAMESplash");
-  //sendBluetoothCommand("AT+NOTI1"); // Connection notification
-  /*sendBluetoothCommand("AT+MODE1");
-  sendBluetoothCommand("AT+DUAL1");
-  sendBluetoothCommand("AT+VERR?");
-  sendBluetoothCommand("AT+CLEAE");
-  sendBluetoothCommand("AT+CLEAB");
-  sendBluetoothCommand("AT+BONDE");
-  sendBluetoothCommand("AT+BONDB");*/
-  sendBluetoothCommand("AT+ROLB0");
-  /*sendBluetoothCommand("AT+AUTH?");
-  sendBluetoothCommand("AT+PINE000000");*/
-  //sendBluetoothCommand("AT+PINB654321");
-  sendBluetoothCommand("AT+PINE?");
-  sendBluetoothCommand("AT+PINB?");
-  
-  sendBluetoothCommand("AT+SCAN0");
-  //sendBluetoothCommand("AT+PIO01"); // led behaviour
-
-  sendBluetoothCommand("AT+ADDE?");
-  sendBluetoothCommand("AT+RESET");
-  //sendBluetoothCommand("AT");
+  Serial.setTimeout(500);
 }
 
-void loop()
+StaticJsonDocument<200> createInfoSensorJson(int waterLevelValue)
 {
-  //char response[20];
-  //sendBluetoothCommand("AT", response);
-  delay(1000);
-  bluetoothSerial.print("hi");
-  //bluetoothSerial.println(millis());
-  Serial.print("hi");
-  Serial.println(millis());
+  StaticJsonDocument<200> doc;
+  doc["type"] = "info_sensor";
+  doc["params"]["water_level"] = waterLevelValue;
+}
 
-  /*bluetoothSerial.print("AT+RENEW");
-  bluetoothSerial.print("AT+BAUD2");
-  bluetoothSerial.print("AT+RESET");*/
-  //Serial.println(response);
-  if (bluetoothSerial.available()) {
-    const char recvChar = bluetoothSerial.read();
-    Serial.print(recvChar);
+struct Query
+{
+  String rawValue;
+};
+
+CircularBuffer<Query, 5> queries;
+
+void serialEvent()
+{
+  static String input;
+  while (Serial.available()) {
+    const char b = Serial.read();
+    input += b;
+    if (b == '\n') {
+      Query query;
+      query.rawValue = input;
+      queries.push(query);
+      input = "";
+    }
+  }
+}
+
+void processQuery(const StaticJsonDocument<200> &doc)
+{
+  const String type = doc["type"];
+  const int id = doc["id"];
+
+  StaticJsonDocument<200> responseDoc;
+  responseDoc["type"] = "ack";
+  responseDoc["id"] = id;
+
+  if (type == "debug_led") {
+    const bool on = doc["params"]["status"];
+    digitalWrite(LED_BUILTIN, on);
+  }
+
+  serializeJson(responseDoc, Serial);
+  Serial.println();
+}
+
+void loop() {
+  delay(500);
+  // Récupere le niveau d'un capteur d'eau
+  const int waterLevelValue = analogRead(waterLevelPin);
+
+  StaticJsonDocument<200> doc = createInfoSensorJson(waterLevelValue);
+  serializeJson(doc, Serial);
+  Serial.println();
+
+  Query query;
+  noInterrupts();
+  const bool hasQuery = !queries.isEmpty();
+  if (hasQuery) {
+      query = queries.pop();
+  }
+  interrupts();
+
+  if (hasQuery) {
+      if (deserializeJson(doc, query.rawValue) != DeserializationError::Ok) {
+        Serial.println("{\"type\":\"json_error\"}");
+      }
+      else {
+        processQuery(doc);
+      }
   }
 }
