@@ -1,1 +1,10 @@
-{"type": "start_session", "params": {"quantity": 200}} 
+Message régulier des capteurs :
+{"type":"info_sensor","params":{"water_level":1023,"timestamp":35661}}
+
+Démarrage étape :
+{"type": "start_session", "id": 0, "params": {"quantity": 200}} 
+Reponse immédiate : 
+{"type":"ack","id":0,"params":{"start_level":1023,"end_level":823}}
+
+Réponse quand l'utilisateur à recupérer l'eau :
+{"type":"session_closed","id":0}

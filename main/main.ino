@@ -4,6 +4,7 @@
 #include <Servo.h>
 
 constexpr int waterLevelPin = A0;
+constexpr int waterTemperaturePin = A1;
 constexpr int buttonPin = 3;
 constexpr int buttonLedPin = 2;
 // Pin du robinet
@@ -30,6 +31,7 @@ struct Session
 void setup() {
   // Configuration des entrées sorties
   pinMode(waterLevelPin, INPUT);
+  pinMode(waterTemperaturePin, INPUT);
   pinMode(tapPin, INPUT);
   pinMode(LED_BUILTIN, OUTPUT);
 
@@ -51,11 +53,12 @@ void setup() {
   digitalWrite(buttonLedPin, !status);
 }*/
 
-StaticJsonDocument<200> createInfoSensorJson(int waterLevelValue)
+StaticJsonDocument<100> createInfoSensorJson(int waterLevelValue, float waterTemperatureDegree)
 {
   StaticJsonDocument<100> doc;
   doc["type"] = "info_sensor";
   doc["params"]["water_level"] = waterLevelValue;
+  doc["params"]["water_temperature"] = waterTemperatureDegree;
   doc["params"]["timestamp"] = millis();
 }
 
@@ -98,10 +101,9 @@ void closeSession()
   Serial.println();
   
   currentState = State::Idle;
-  closeTap();
 }
 
-void processQuery(const StaticJsonDocument<200> &doc)
+void processQuery(const StaticJsonDocument<100> &doc)
 {
   const String type = doc["type"];
   const int id = doc["id"];
@@ -127,10 +129,14 @@ void processQuery(const StaticJsonDocument<200> &doc)
 
 void sendInfoSensor()
 {
-  // Récupere le niveau d'un capteur d'eau
   const int waterLevelValue = analogRead(waterLevelPin);
+  const int waterTemperatureValue = analogRead(waterTemperaturePin);
+  const int B = 4275; 
+  const float R0 = 100000.0f;
+  const float R = R0 * 1023.0 / waterTemperatureValue - 1.0;
+  const float waterTemperatureDegree = 1.0/(log(R/R0)/B+1/298.15)-273.15;
 
-  StaticJsonDocument<100> doc = createInfoSensorJson(waterLevelValue);
+  StaticJsonDocument<100> doc = createInfoSensorJson(waterLevelValue, waterTemperatureDegree);
   serializeJson(doc, Serial);
   Serial.println();
 }
@@ -177,14 +183,10 @@ void listenButton()
 {
   const int pressed = !digitalRead(buttonPin);
 
-  const bool buttonLedOn = (currentState != State::Idle) && pressed;
-  digitalWrite(buttonLedPin, buttonLedOn); 
-
   switch (pressed) {
     case false:
       switch (currentState) {
         case State::Filling:
-          closeTap();
           currentState = State::WaitToFill;
           break;
       }
@@ -192,7 +194,6 @@ void listenButton()
     case true:
       switch (currentState) {
         case State::WaitToFill:
-          openTap();
           currentState = State::Filling;
           break;
       }
@@ -211,6 +212,21 @@ void updateCurrentSession()
   }
 }
 
+void updateState()
+{
+  switch (currentState) {
+    case State::Filling:
+      openTap();
+    case State::WaitToFill:
+      digitalWrite(buttonLedPin, HIGH);
+      break;
+    default:
+      digitalWrite(buttonLedPin, LOW);
+      closeTap();
+      break;
+  }
+}
+
 void loop() {
   delay(100);
 
@@ -223,4 +239,6 @@ void loop() {
   processOneQuery();
   updateCurrentSession();
   listenButton();
+
+  updateState();
 }
