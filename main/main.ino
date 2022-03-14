@@ -2,14 +2,25 @@
 #define CIRCULAR_BUFFER_INT_SAFE
 #include <CircularBuffer.h>
 #include <Servo.h>
+#include <Ultrasonic.h>
 
+//#define DEBUG_WATER_LEVEL
+
+#ifdef DEBUG_WATER_LEVEL
 constexpr int waterLevelPin = A0;
+#else
+constexpr int waterLevelPin = 7;
+#endif
 constexpr int waterTemperaturePin = A1;
 constexpr int buttonPin = 3;
 constexpr int buttonLedPin = 2;
 // Pin du robinet
 constexpr int tapPin = 4;
 Servo servo;
+
+#ifndef DEBUG_WATER_LEVEL
+Ultrasonic ultrasonic(waterLevelPin);
+#endif
 
 uint32_t lastEpochSentInfoSensor;
 
@@ -30,7 +41,9 @@ struct Session
 
 void setup() {
   // Configuration des entrées sorties
+#ifdef DEBUG_WATER_LEVEL
   pinMode(waterLevelPin, INPUT);
+#endif
   pinMode(waterTemperaturePin, INPUT);
   pinMode(tapPin, INPUT);
   pinMode(LED_BUILTIN, OUTPUT);
@@ -84,9 +97,18 @@ void serialEvent()
   }
 }
 
+int getWaterLevel()
+{
+#ifdef DEBUG_WATER_LEVEL
+  return analogRead(waterLevelPin);
+#else
+  return ultrasonic.MeasureInCentimeters();
+#endif
+}
+
 void startSession(int id, int quantity)
 {
-  currentSession.startLevel = analogRead(waterLevelPin);
+  currentSession.startLevel = getWaterLevel();
   currentSession.endLevel = currentSession.startLevel - quantity;
   currentSession.quantity = quantity;
   currentState = State::WaitToFill;
@@ -129,7 +151,7 @@ void processQuery(const StaticJsonDocument<100> &doc)
 
 void sendInfoSensor()
 {
-  const int waterLevelValue = analogRead(waterLevelPin);
+  const int waterLevelValue = getWaterLevel();
   const int waterTemperatureValue = analogRead(waterTemperaturePin);
   const int B = 4275; 
   const float R0 = 100000.0f;
@@ -204,7 +226,7 @@ void listenButton()
 void updateCurrentSession()
 {
   if (currentState == State::Filling) {
-    const int waterLevel = analogRead(waterLevelPin);
+    const int waterLevel = getWaterLevel();
     const bool passedEnd = (waterLevel <= currentSession.endLevel);
     if (passedEnd) {
       closeSession();
